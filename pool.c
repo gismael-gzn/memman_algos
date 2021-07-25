@@ -74,6 +74,14 @@ struct pool_t
 	cells free_list;
 };
 
+struct idpool_t
+{
+	arena_t* chunk;
+	size_t segsize;
+	cells free_list;
+	void* id;
+};
+
 size_t pool_capacity(pool_t* pool)
 {
 	return get_len(&pool->free_list)+arena_capacity(pool->chunk)/pool->segsize;
@@ -87,10 +95,10 @@ size_t pool_segsize(pool_t* pool)
 pool_t* pool_init(void* mem, size_t mem_size, size_t segsize)
 {
 	pool_t* pool = NULL;
+	arena_t* arena = NULL;
 
 	if(!isnull(mem))
 	{
-		arena_t* arena = NULL;
 		pool = mem;
 		arena = arena_init
 		((byteptr(mem)+sizeof *pool), mem_size-sizeof *pool, granule_bytes);
@@ -115,6 +123,36 @@ pool_t* pool_new(malloc_impl* mallochook, size_t mem_size, size_t segsize)
 		mallochook = malloc;
 	void* mem = mallochook(mem_size);
 	return pool_init(mem, mem_size, segsize);
+}
+
+idpool_t* idpool_init(void* mem, size_t mem_size, size_t segsize, void* id)
+{
+	idpool_t* pool = NULL;
+	arena_t* arena = NULL;
+
+	if(!isnull(mem))
+	{
+		pool = mem;
+		arena = arena_init
+		((byteptr(mem)+sizeof *pool), mem_size-sizeof *pool, granule_bytes);
+
+		if(segsize <= granule_bytes)
+			segsize = sizeof(cell);
+		else 
+			segsize = segsize + cell_overhead_size,
+			segsize += to_nearest_multiple(segsize, granule_bytes);
+
+		*pool = (idpool_t){
+			arena, segsize, sc_compound(cells, &pool->free_list, ), id,
+			};
+	}
+
+	return pool;
+}
+
+void* idpool_getid(idpool_t* pool)
+{
+	return pool->id;
 }
 
 void* pool_pop(pool_t* pool)

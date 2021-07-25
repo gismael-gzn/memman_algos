@@ -3,13 +3,12 @@
 
 #include "pool.h"
 
-typedef struct poolchain_t poolchain_t;
+typedef struct poolset_t poolset_t;
 
-size_t poolchain_memsize(size_t poolno);
-size_t poolchain_smallestsize(poolchain_t* chain);
-size_t poolchain_biggestsize(poolchain_t* chain);
+size_t poolset_sizeof(size_t poolno);
+size_t poolset_smallestsize(poolset_t* chain);
+size_t poolset_biggestsize(poolset_t* chain);
 
-poolchain_t *poolchain_init(void *mem, size_t memsize, size_t pool_bytes,
-							size_t step);
+poolset_t *poolset_init(void *mem, size_t memsize, size_t poolmem, size_t step);
 
 #endif //POOLSET_ALLOCATOR_H__

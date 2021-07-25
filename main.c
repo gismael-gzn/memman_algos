@@ -31,12 +31,14 @@ void unit_test1(int argc, char const *argv[])
 
 #define Kibs(n) ((1<<10)*(n))
 
+_Thread_local poolset_t* chain = NULL;
+
 int main(int argc, char const *argv[])
 {
 	// unit_test1(argc, argv);
 	printf("poolchain size: %u\n", Kibs(256));
 
-	poolchain_t* chain = poolchain_init(malloc(Kibs(256)), Kibs(256), 4096, 8);
+	chain = poolset_init(malloc(Kibs(256)), Kibs(256), 4096, 8);
 
 	return 0;
 }

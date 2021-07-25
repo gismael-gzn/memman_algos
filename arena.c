@@ -24,12 +24,12 @@ static inline void* linear_malloc(byte_t** mem, size_t n)
 
 size_t arena_capacity(arena_t* reg)
 {
-	return ptrdiff(reg->alloc_ptr, reg->end);
+	return ptroff(reg->alloc_ptr, reg->end);
 }
 
 size_t arena_size(arena_t* reg)
 {
-	return ptrdiff(reg, reg->end);
+	return ptroff(reg, reg->end);
 }
 
 arena_t* arena_init(void* mem, size_t mem_size, size_t alignment)

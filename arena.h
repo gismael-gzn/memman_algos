@@ -9,9 +9,9 @@
 
 #define byteptr(ptr) ((uint8_t*)ptr)
 
-#define ptrdiff(begin, end) (byteptr(end)-byteptr(begin))
+#define ptroff(begin, end) (byteptr(end)-byteptr(begin))
 
-#define to_nearest_multiple(x, mul) (x==0?1:x)%(mul)==0? 0: ((mul)-((x)%(mul)))
+#define to_nearest_multiple(x, mul) ((x==0?1:x)%(mul)==0? 0: ((mul)-((x)%(mul))))
 
 typedef void* malloc_impl(size_t);
 typedef void* realloc_impl(void*, size_t);

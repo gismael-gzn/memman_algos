@@ -1,62 +1,49 @@
 #include "poolset.h"
 #include <stdio.h>
 
-
-typedef struct owned_pool
-{
-	poolchain_t* owner;
-	pool_t* pool;
-}owned_pool;
-
-
-
-struct poolchain_t
+struct poolset_t
 {
 	size_t step;
 	struct
 	{
-		size_t collection_size;
-		pool_t *collection[];
+		size_t elements;
+		idpool_t *pool[];
 	};
 };
 
 
 size_t poolchain_memsize(size_t poolno)
 {
-	return sizeof(poolchain_t) + poolno*sizeof(pool_t*);
+	return sizeof(poolset_t) + poolno*sizeof(idpool_t*);
 }
 
-poolchain_t *poolchain_init(void *mem, size_t memsize, size_t pool_bytes,
-							size_t step);
 
-poolchain_t *poolchain_init(void *mem, size_t memsize, size_t pool_bytes,
-							size_t step)
+poolset_t *poolset_init(void *mem, size_t memsize, size_t poolmem, size_t step)
 {
-	poolchain_t* chain = NULL;
+	poolset_t* set = NULL;
 	void* base = mem;
-	if(!isnull(mem) && memsize >= sizeof *chain)
+	if(!isnull(mem) && memsize >= sizeof *set)
 	{
-		chain = mem;
+		set = mem;
 		step += to_nearest_multiple(step, 1<<GRANULE_SIZE_LOG2);
 
-		memsize -= sizeof *chain;
+		memsize -= sizeof *set;
 
-
-		size_t pool_arr_size = sizeof(pool_t*)*memsize/pool_bytes;
+		size_t pool_arr_size = memsize/poolmem*sizeof(idpool_t*);
 		if(memsize >= pool_arr_size)
 		{
+			byte_t* memptr = mem;
 			memsize -= pool_arr_size;
-			mem = byteptr(mem) + poolchain_memsize(memsize/pool_bytes);
-			mem = align_pointer(mem, 1 << GRANULE_SIZE_LOG2);
+			memptr += pool_arr_size;
+			memptr = align_pointer(memptr, 1<<GRANULE_SIZE_LOG2);
+			memsize = ptroff(memptr, memptr+memsize);
 
-			for (size_t ctrl=0, i=0; ctrl+pool_bytes<=memsize; ctrl += pool_bytes, 
-				mem = byteptr(mem) + pool_bytes, ++i)
+			for (size_t i=0; (i+1)*poolmem<=memsize; memptr += poolmem, ++i)
 			{
-				chain->collection[i] = pool_init(mem, pool_bytes, i*step);
-				printf("%zu\n", ptrdiff(base, mem));
+				set->pool[i] = idpool_init(memptr, poolmem, (i+1)*step, set);
 			}
 		}
 	}
 
-	return chain;
+	return set;
 }

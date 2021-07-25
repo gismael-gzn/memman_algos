@@ -6,6 +6,8 @@
 
 typedef struct pool_t pool_t;
 
+typedef struct idpool_t idpool_t;
+
 // inline these 2
 size_t pool_segsize(pool_t* pool);
 
@@ -14,6 +16,10 @@ size_t pool_capacity(pool_t* pool);
 pool_t* pool_init(void* mem, size_t mem_size, size_t segment);
 
 pool_t* pool_new(malloc_impl* mallochook, size_t mem_size, size_t segment);
+
+idpool_t* idpool_init(void* mem, size_t mem_size, size_t segment, void* id);
+
+void* idpool_getid(idpool_t* pool);
 
 void* pool_pop(pool_t* pool);
 
