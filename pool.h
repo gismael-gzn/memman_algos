@@ -8,7 +8,10 @@ typedef struct pool_t pool_t;
 
 typedef struct idpool_t idpool_t;
 
-// inline these 2
+size_t idpool_sizeof(void);
+
+size_t pool_sizeof(void);
+
 size_t pool_segsize(pool_t* pool);
 
 size_t pool_capacity(pool_t* pool);
@@ -21,16 +24,16 @@ idpool_t* idpool_init(void* mem, size_t mem_size, size_t segment, void* id);
 
 void* idpool_getid(idpool_t* pool);
 
-void* pool_pop(pool_t* pool);
+void* pool_pull(pool_t* pool);
 
 void* pool_pop_check(pool_t* pool, size_t n);
 
 void pool_push(pool_t* pool, void* payload);
 
-size_t payload_size(void* payload);
+size_t payload_pool_segsize(void* payload);
 
-void* payload_owner_pool(void* payload);
+pool_t* payload_owner_pool(void* payload);
 
-void payload_pushto_owner(void* payload);
+void payload_pushto_pool(void* payload);
 
 #endif //POOL_ALLCOATOR_H__

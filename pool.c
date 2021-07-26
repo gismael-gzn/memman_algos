@@ -82,6 +82,16 @@ struct idpool_t
 	void* id;
 };
 
+size_t idpool_sizeof(void)
+{
+	return sizeof(idpool_t);
+}
+
+size_t pool_sizeof(void)
+{
+	return sizeof(pool_t);
+}
+
 size_t pool_capacity(pool_t* pool)
 {
 	return get_len(&pool->free_list)+arena_capacity(pool->chunk)/pool->segsize;
@@ -155,7 +165,7 @@ void* idpool_getid(idpool_t* pool)
 	return pool->id;
 }
 
-void* pool_pop(pool_t* pool)
+void* pool_pull(pool_t* pool)
 {
 	void* payload = NULL;
 	cell* new_cell = NULL;
@@ -174,7 +184,7 @@ void* pool_pop(pool_t* pool)
 
 void* pool_pop_check(pool_t* pool, size_t n)
 {
-	return n <= pool_segsize(pool)? pool_pop(pool): NULL;
+	return n <= pool_segsize(pool)? pool_pull(pool): NULL;
 }
 
 void pool_push(pool_t* pool, void* payload)
@@ -183,19 +193,19 @@ void pool_push(pool_t* pool, void* payload)
 	cells_add(&pool->free_list, free_cell);
 }
 
-extern inline size_t payload_size(void* payload)
+extern inline size_t payload_pool_segsize(void* payload)
 {
 	cell* c = canonic_ptr(payload);
 	return pool_segsize((pool_t*)c->owner);
 }
 
-void* payload_owner_pool(void* payload)
+pool_t* payload_owner_pool(void* payload)
 {
 	cell* c = canonic_ptr(payload);
 	return c->owner;
 }
 
-void payload_pushto_owner(void* payload)
+void payload_pushto_pool(void* payload)
 {
 	pool_push(canonic_ptr(payload)->owner, payload);
 }

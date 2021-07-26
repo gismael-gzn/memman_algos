@@ -9,6 +9,13 @@ size_t poolset_sizeof(size_t poolno);
 size_t poolset_smallestsize(poolset_t* chain);
 size_t poolset_biggestsize(poolset_t* chain);
 
-poolset_t *poolset_init(void *mem, size_t memsize, size_t poolmem, size_t step);
+poolset_t* poolset_init(void *mem, size_t memsize, size_t poolmem, size_t step);
+poolset_t* poolset_new(malloc_impl mallochook, size_t memsize, size_t poolmem, size_t step);
+
+void* poolset_pull(poolset_t* set, size_t n);
+
+void* poolset_pull_quick(poolset_t* set, size_t n);
+
+void* poolset_push(poolset_t* set, void* payload);
 
 #endif //POOLSET_ALLOCATOR_H__
