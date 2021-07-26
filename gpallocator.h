@@ -23,5 +23,6 @@ void* gpallocator_realloc(void* payload);
 
 void* gpallocator_free(void* payload);
 
+size_t gpallocated_size(void* payload);
 
 #endif //GENERAL_PURPOSE_ALLOCATOR_H__

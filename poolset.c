@@ -47,7 +47,7 @@ poolset_t *poolset_init(void *mem, size_t memsize, size_t poolmem, size_t step)
 			for(; (i+1)*poolmem<=memsize; memptr += poolmem, ++i)
 			{
 				size_t segsize = (i+1)*step;
-				if(segsize > poolmem - idpool_sizeof())
+				if(segsize >= poolmem - idpool_sizeof())
 					poolmem += step;
 				set->pool[i] = idpool_init(memptr, poolmem, segsize, set);
 
@@ -70,6 +70,7 @@ poolset_t* poolset_new(malloc_impl mallochook, size_t memsize, size_t poolmem, s
 void* poolset_pull(poolset_t* set, size_t n)
 {
 	size_t idx = (n+!n-1)/set->step;
+	printf("mapping %zu/%zu\n", idx, set->poolno);
 	return idx < set->poolno? pool_pull(to_pool_t(set->pool[idx])): NULL;
 }
 

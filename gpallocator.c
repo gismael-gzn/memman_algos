@@ -92,63 +92,6 @@ struct gpallocator_t
 	poolset_t *preallocated[];
 };
 
-static inline void* find_in_preallocated(gpallocator_t* allocator, size_t n)
-{
-	void* payload = NULL;
-	for(size_t i=0; i<allocator->poolsets; ++i)
-	{
-		assert(allocator->preallocated[i]);
-		payload = poolset_pull(allocator->preallocated[i], n);
-		if(!isnull(payload))
-		{
-			poolset_t **a = allocator->preallocated, **b=a+i, *sv = *a;
-			*a = *b, *b = sv;
-			allocator->search = in_preallocated;
-			break;
-		}
-	}
-	return payload;
-}
-
-static inline void* find_in_extra(gpallocator_t* alloc, size_t n)
-{
-	void* payload = NULL;
-
-	pool_list* extra = &alloc->extra_allocation;
-	for(pool_dnode* i=get_head(extra); iauto(extra, i); i=get_next(i))
-	{
-		pool_t* check = to_pool_t(i->pool);
-		if(!isnull(check))
-		{
-			if(n <= pool_segsize(check) && pool_capacity(check))
-			{
-				payload = pool_pull(check);
-				if(get_head(extra) != i)
-					pool_list_pop(i),
-					pool_list_add(extra, i);
-			}
-			else
-				continue;
-		}
-	}
-
-	if(isnull(payload))
-	{
-		pool_dnode* fallback = new_pool_dnode
-		(alloc->hooks.mallochook, alloc->max_size+idpool_sizeof()+cell_overhead_sizeof(), n, alloc);
-		if(!isnull(fallback))
-		{
-			pool_t* as_pool = to_pool_t(fallback->pool);
-			payload = pool_pull(as_pool);
-			pool_list_add(extra, fallback);
-		}
-	}
-
-	alloc->search = in_extra;
-
-	return payload;
-}
-
 static inline void sanitize_hooks(struct memman_hooks* hooks_ref)
 {
 	if(isnull(hooks_ref->mallochook))
@@ -185,7 +128,6 @@ size_t initial_poolsets, size_t pool_chunk, size_t step, void* id)
 				poolset_new(hooks.mallochook, poolset_chunk, pool_chunk, step);
 			}
 
-		printf("%p\n", *allocator->preallocated);
 		allocator->max_size = poolset_biggestsize(*allocator->preallocated);
 	}
 
@@ -197,22 +139,74 @@ void gpallocator_del(gpallocator_t* allocator)
 
 }
 
-void* gpallocator_malloc(gpallocator_t* allocator, size_t n)
+static inline void* find_in_preallocated(gpallocator_t* allocator, size_t n)
 {
-	if(n <= allocator->max_size)
+	void* payload = NULL;
+	for(size_t i=0; i<allocator->poolsets; ++i)
+	{
+		payload = poolset_pull(allocator->preallocated[i], n);
+		if(!isnull(payload))
+		{
+			poolset_t **a = allocator->preallocated, **b=a+i, *sv = *a;
+			*a = *b, *b = sv;
+			allocator->search = in_preallocated;
+			break;
+		}
+	}
+	return payload;
+}
+
+static inline void* find_in_extra(gpallocator_t* alloc, size_t n)
+{
+	alloc->search = in_extra;
+	void* payload = NULL;
+	pool_list* extra = &alloc->extra_allocation;
+
+	for(pool_dnode* i=get_head(extra); iauto(extra, i); i=get_next(i))
+	{
+		pool_t* check = to_pool_t(i->pool);
+		if(!isnull(check))
+		{
+			if(n <= pool_segsize(check) && pool_capacity(check))
+			{
+				payload = pool_pull(check);
+				if(get_head(extra) != i)
+					pool_list_pop(i),
+					pool_list_add(extra, i);
+			}
+			else
+				continue;
+		}
+	}
+
+	if(isnull(payload))
+	{
+		pool_dnode* fallback = new_pool_dnode(alloc->hooks.mallochook, 
+		alloc->max_size+idpool_sizeof()+cell_overhead_sizeof(), n, alloc);
+		if(!isnull(fallback))
+		{
+			pool_t* as_pool = to_pool_t(fallback->pool);
+			payload = pool_pull(as_pool);
+			pool_list_add(extra, fallback);
+		}
+	}
+
+	return payload;
+}
+
+void* gpallocator_malloc(gpallocator_t* ref, size_t n)
+{
+	if(n <= ref->max_size)
 	{
 		void* payload = NULL;
-		switch (allocator->search)
+		switch (ref->search)
 		{
 		case in_preallocated:
-			printf("max size is %zu\n", allocator->max_size);
-			payload = find_in_preallocated(allocator, n);
+			payload = find_in_preallocated(ref, n);
 
 		case in_extra:
-			if (isnull(payload))
-			{
-				payload = find_in_extra(allocator, n);
-			}
+			if(isnull(payload))
+				payload = find_in_extra(ref, n);
 		}
 
 		return payload;
@@ -220,9 +214,8 @@ void* gpallocator_malloc(gpallocator_t* allocator, size_t n)
 
 	else
 	{
-		chunk_dnode* chunk = new_chunk_node
-		(allocator->hooks.mallochook, n, allocator);
-		chunk_list_add(&allocator->big_chunks, chunk);
+		chunk_dnode* chunk = new_chunk_node(ref->hooks.mallochook, n, ref);
+		chunk_list_add(&ref->big_chunks, chunk);
 		return chunk->payload;
 	}
 

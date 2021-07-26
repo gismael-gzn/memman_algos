@@ -1,4 +1,5 @@
 #include "gpallocator.h"
+#include "quicks.h.c"
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
@@ -37,14 +38,14 @@ int main(int argc, char const *argv[])
 {
 	// unit_test1(argc, argv);
 	// chain = poolset_init(malloc(Kibs(2048)), Kibs(2048), Kibs(4), 8);
-	// void* t1 = poolset_pull(chain, 8);
+	// void* t1 = poolset_pull(chain, toint(argv[1], 10).usg);
 	// assert(t1);
 	// printf("biggest size: %zu\n", poolset_biggestsize(chain));
 
 	gpallocator_t* main_thread = gpallocator_new
 	((struct memman_hooks ){malloc, realloc, free}, Kibs(2048), 1, Kibs(4), 8, NULL);
 
-	void* test = gpallocator_malloc(main_thread, 4064);
+	void* test = gpallocator_malloc(main_thread, toint(argv[1], 10).sg);
 	assert(test);
 	printf("[%zu]\n", payload_pool_segsize(test));
 
