@@ -97,7 +97,7 @@
 
 /* Compound initializer for simple lists */
 #define sl_compound(cont_type, list, ...) \
-	(cont_type){.dummy.right = &get_dummy(list), __VA_ARGS__,};
+	(cont_type){.dummy.right = &get_dummy(list), __VA_ARGS__}
 
 /* Simple list default initializer */
 #define sl_init(list) sg_dummy(&get_dummy(list));

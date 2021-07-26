@@ -3,10 +3,17 @@
 
 #include "align_config.h"
 #include "arena.h"
+#include <stdio.h>
 
 typedef struct pool_t pool_t;
 
 typedef struct idpool_t idpool_t;
+
+pool_t* to_pool_t(idpool_t* ref);
+
+idpool_t* to_idpool_t(pool_t* ref);
+
+size_t cell_overhead_sizeof(void);
 
 size_t idpool_sizeof(void);
 

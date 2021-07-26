@@ -5,6 +5,11 @@ struct arena_t
 	byte_t *alloc_ptr, *end;
 };
 
+size_t arena_sizeof(void)
+{
+	return sizeof(arena_t);
+}
+
 size_t bytes_to_align(void* ptr, size_t align)
 {
 	return to_nearest_multiple((uint64_t)(byteptr(ptr)+sizeof(arena_t)), align);

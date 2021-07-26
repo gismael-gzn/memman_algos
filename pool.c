@@ -76,20 +76,35 @@ struct pool_t
 
 struct idpool_t
 {
+	void* id;
 	arena_t* chunk;
 	size_t segsize;
 	cells free_list;
-	void* id;
 };
+
+pool_t* to_pool_t(idpool_t* ref)
+{
+	return (pool_t*)(byteptr(ref) + offsetof(idpool_t, chunk));
+}
+
+idpool_t* to_idpool_t(pool_t* ref)
+{
+	return (idpool_t*)(byteptr(ref) - offsetof(idpool_t, chunk));
+}
 
 size_t idpool_sizeof(void)
 {
-	return sizeof(idpool_t);
+	return sizeof(idpool_t) + arena_sizeof();
 }
 
 size_t pool_sizeof(void)
 {
-	return sizeof(pool_t);
+	return sizeof(pool_t) + arena_sizeof();
+}
+
+size_t cell_overhead_sizeof(void)
+{
+	return cell_overhead_size;
 }
 
 size_t pool_capacity(pool_t* pool)
@@ -153,7 +168,7 @@ idpool_t* idpool_init(void* mem, size_t mem_size, size_t segsize, void* id)
 			segsize += to_nearest_multiple(segsize, granule_bytes);
 
 		*pool = (idpool_t){
-			arena, segsize, sc_compound(cells, &pool->free_list, ), id,
+			id, arena, segsize, sc_compound(cells, &pool->free_list, ),
 			};
 	}
 
@@ -169,6 +184,9 @@ void* pool_pull(pool_t* pool)
 {
 	void* payload = NULL;
 	cell* new_cell = NULL;
+
+	printf("capacity: %zu, need: %zu\n", 
+		arena_capacity(pool->chunk), pool->segsize);
 
 	if(pool->segsize <= arena_capacity(pool->chunk))
 		new_cell = arena_malloc_quick(pool->chunk, pool->segsize),

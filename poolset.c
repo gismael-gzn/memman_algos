@@ -19,13 +19,14 @@ size_t poolset_smallestsize(poolset_t* chain)
 
 size_t poolset_biggestsize(poolset_t* chain)
 {
-	return pool_segsize((pool_t*)chain->pool[chain->poolno-1]);
+	return pool_segsize(to_pool_t(chain->pool[chain->poolno-1]));
 }
 
+// Check this one today
 poolset_t *poolset_init(void *mem, size_t memsize, size_t poolmem, size_t step)
 {
 	poolset_t* set = NULL;
-	void* base = mem;
+	// void* base = mem;
 	if(!isnull(mem) && memsize >= sizeof *set)
 	{
 		set = mem;
@@ -41,29 +42,45 @@ poolset_t *poolset_init(void *mem, size_t memsize, size_t poolmem, size_t step)
 			memptr = align_pointer(memptr, 1<<GRANULE_SIZE_LOG2);
 			memsize -= pool_arr_size;
 			memsize = ptroff(memptr, memptr+memsize);
-			*set = (poolset_t){step, poolno, };
 
-			for (size_t i=0; (i+1)*poolmem<=memsize; memptr += poolmem, ++i)
+			size_t i=0;
+			for(; (i+1)*poolmem<=memsize; memptr += poolmem, ++i)
 			{
 				size_t segsize = (i+1)*step;
 				if(segsize > poolmem - idpool_sizeof())
-					segsize = poolmem - idpool_sizeof();
+					poolmem += step;
 				set->pool[i] = idpool_init(memptr, poolmem, segsize, set);
-				// printf(">>%zu::%zu\n", i, pool_segsize((pool_t*)set->pool[i]));
+
+				pool_t* upcast = to_pool_t(set->pool[i]);
+				printf(">>%zu::%zu\n", i, pool_segsize(upcast));
 			}
+			*set = (poolset_t){step, i, };
 		}
 	}
 	return set;
 }
 
+poolset_t* poolset_new(malloc_impl mallochook, size_t memsize, size_t poolmem, size_t step)
+{
+	if(isnull(mallochook))
+		mallochook = malloc;
+	return poolset_init(mallochook(memsize), memsize, poolmem, step);
+}
+
 void* poolset_pull(poolset_t* set, size_t n)
 {
 	size_t idx = (n+!n-1)/set->step;
-	return idx < set->poolno? pool_pull((pool_t*)set->pool[idx]): NULL;
+	return idx < set->poolno? pool_pull(to_pool_t(set->pool[idx])): NULL;
+}
+
+void* poolset_pull_quick(poolset_t* set, size_t n)
+{
+	size_t idx = (n+!n-1)/set->step;
+	return pool_pull(to_pool_t(set->pool[idx]));
 }
 
 void* poolset_push(poolset_t* set, void* payload)
 {
 	size_t n = payload_pool_segsize(payload), idx = (n+!n-1)/set->step;
-	pool_push((pool_t*)set->pool[idx], payload);
+	pool_push(to_pool_t(set->pool[idx]), payload);
 }

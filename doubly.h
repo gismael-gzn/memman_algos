@@ -98,7 +98,7 @@
 	(cont_typename)                                                      \
 	{                                                                    \
 		.dummy.right = &get_dummy(list), .dummy.left = &get_dummy(list), \
-		__VA_ARGS__,                                                     \
+		__VA_ARGS__                                                      \
 	}
 
 /* Simple list default initializer */

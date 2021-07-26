@@ -21,11 +21,7 @@ typedef uint8_t byte_t;
 
 typedef struct arena_t arena_t;
 
-struct arena_tuner
-{
-	malloc_impl* malloc;
-	size_t mem_size;
-};
+size_t arena_sizeof(void);
 
 size_t bytes_to_align(void* ptr, size_t alignment);
 
