@@ -2,22 +2,11 @@
 #define ARENA_ALLOCATOR_H__
 
 #include <stdlib.h>
-#include <stddef.h>
-#include <stdint.h>
-
-#define isnull(ptr) (ptr == NULL)
-
-#define byteptr(ptr) ((uint8_t*)ptr)
-
-#define ptroff(begin, end) (byteptr(end)-byteptr(begin))
-
-#define to_nearest_multiple(x, mul) ((x==0?1:x)%(mul)==0? 0: ((mul)-((x)%(mul))))
+#include "extrastddef.h"
 
 typedef void* malloc_impl(size_t);
 typedef void* realloc_impl(void*, size_t);
 typedef void free_impl(void*);
-
-typedef uint8_t byte_t;
 
 typedef struct arena_t arena_t;
 

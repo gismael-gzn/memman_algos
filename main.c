@@ -37,17 +37,31 @@ poolset_t* chain = NULL;
 int main(int argc, char const *argv[])
 {
 	// unit_test1(argc, argv);
-	// chain = poolset_init(malloc(Kibs(2048)), Kibs(2048), Kibs(4), 8);
+	// chain = poolset_new(malloc, 8, 504, NULL);
 	// void* t1 = poolset_pull(chain, toint(argv[1], 10).usg);
 	// assert(t1);
 	// printf("biggest size: %zu\n", poolset_biggestsize(chain));
+	// size_t sz = gpallocated_size(t1);
+	// printf("size is %zu\n", sz);
 
 	gpallocator_t* main_thread = gpallocator_new
-	((struct memman_hooks ){malloc, realloc, free}, Kibs(2048), 1, Kibs(4), 8, NULL);
+	((struct memman_hooks ){0}, 1, 8, 512, main);
 
-	void* test = gpallocator_malloc(main_thread, toint(argv[1], 10).sg);
-	assert(test);
-	printf("[%zu]\n", payload_pool_segsize(test));
+	void *test = gpallocator_malloc(main_thread, toint(argv[1], 10).sg);
+	size_t sz = gpallocated_size(test);
+	printf("size is %zu\n", sz);
+
+	// while(1)
+	// {
+	// 	void* intense_test =
+	// 	gpallocator_malloc(main_thread, toint(argv[1], 10).sg);
+	// 	assert(intense_test);
+	// // printf("[%zu]\n", payload_pool_segsize(intense_test));
+	// }
+
+	// void* test = gpallocator_malloc(main_thread, toint(argv[1], 10).sg);
+	// assert(test);
+	// printf("[%zu]\n", payload_pool_segsize(test));
 
 	return 0;
 }

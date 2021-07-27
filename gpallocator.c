@@ -1,24 +1,24 @@
 #include "gpallocator.h"
 #include "doubly.h"
 #include "singly.h"
+#include "cell.h"
 
 typedef struct chunk_dnode
 {
 	DOUBLY_ND(struct chunk_dnode);
 	size_t size;
-	void* owner;
-	byte_t payload[1];
+	cell_struct_members_alt;
 }chunk_dnode;
 
 static inline chunk_dnode* chunk_canonic_ptr(byte_t* payload)
 {
-	return (chunk_dnode*)(payload - offsetof(chunk_dnode, payload));
+	return (chunk_dnode*)(payload - offsetof(chunk_dnode, granules));
 }
 
 static chunk_dnode* new_chunk_node(malloc_impl* mallochook, size_t size, void* owner)
 {
 	chunk_dnode* cn = mallochook(sizeof *cn + size - 1);
-	*cn = (chunk_dnode){.size = size, .owner = owner, };
+	*cn = (chunk_dnode){.size = size, {.owner = owner, }, };
 	return cn;
 }
 
@@ -33,6 +33,7 @@ static void realloc_chunk_node
 
 typedef struct pool_dnode
 {
+	owned_block_alt;
 	DOUBLY_ND(struct pool_dnode);
 	idpool_t* pool;
 }pool_dnode;
@@ -48,7 +49,11 @@ static pool_dnode* new_pool_dnode
 	pdn = (void*)mem;
 	mem += sizeof *pdn, mem = align_pointer(mem, 1<<GRANULE_SIZE_LOG2);
 
-	pdn->pool = idpool_init(mem, memsize, segment, owner);
+	// memset(pdn, 0, totalmem);
+
+	*pdn = (pool_dnode){
+		.owner = owner, .pool = idpool_init(mem, memsize, segment, pdn),
+	};
 
 	return pdn;
 }
@@ -83,7 +88,7 @@ enum priority {in_preallocated, in_extra};
 
 struct gpallocator_t
 {
-	void* owner;
+	owned_block;
 	struct memman_hooks hooks;
 	size_t poolsets, max_size;
 	enum priority search;
@@ -91,6 +96,47 @@ struct gpallocator_t
 	pool_list extra_allocation;
 	poolset_t *preallocated[];
 };
+
+static inline unsigned get_ownerships(void *save[const 5], void* start)
+{
+	unsigned block_type = 0;
+	owned_block_alt *trav = !isnull(start)? canonic_ptr_head(start): NULL;
+
+	save[block_type] = trav = trav->owner, ++block_type;
+		save[block_type] = trav = trav->owner, ++block_type;
+			save[block_type] = trav = trav->owner, ++block_type;
+	save[block_type] = trav = trav->owner, ++block_type;
+
+	// while(!isnull(trav))
+	// 	save[block_type] = trav = trav->owner, ++block_type;
+
+	return block_type-1;
+}
+
+/* 
+block -> pool -> allocator
+block -> pool -> node -> allocator
+block -> allocator
+*/
+
+size_t gpallocated_size(void* payload)
+{
+	enum block_type {standalone=1, preallocated=3, extra=4};
+	void *ownership_chain[5] = {0};
+	unsigned type = get_ownerships(ownership_chain, payload);
+
+	switch (type)
+	{
+	case standalone:
+		return chunk_canonic_ptr(payload)->size;
+
+	case extra:
+	case preallocated:
+		return payload_pool_segsize(payload);
+	}
+
+	return type;
+}
 
 static inline void sanitize_hooks(struct memman_hooks* hooks_ref)
 {
@@ -102,65 +148,61 @@ static inline void sanitize_hooks(struct memman_hooks* hooks_ref)
 		hooks_ref->freehook = free;
 }
 
-gpallocator_t* gpallocator_new(struct memman_hooks hooks, size_t poolset_chunk,
-size_t initial_poolsets, size_t pool_chunk, size_t step, void* id)
+gpallocator_t* gpallocator_new(struct memman_hooks hooks, size_t sets, 
+size_t step, size_t max_block, void* id)
 {
 	sanitize_hooks(&hooks);
-	gpallocator_t* allocator = hooks.mallochook
-	(sizeof *allocator + initial_poolsets*sizeof(poolset_t*));
+	gpallocator_t* ref = hooks.mallochook
+	(sizeof *ref + sets*sizeof(poolset_t*));
 
-	if(!isnull(allocator))
+	if(!isnull(ref))
 	{
-		*allocator = (gpallocator_t){
-			id,
+		*ref = (gpallocator_t){
+			NULL,
 			hooks,
-			initial_poolsets,
-			0,
+			sets,
+			max_block,
 			in_preallocated,
-			dl_compound(chunk_list, &allocator->big_chunks, ),
-			dl_compound(pool_list, &allocator->extra_allocation, ),
+			dl_compound(chunk_list, &ref->big_chunks, ),
+			dl_compound(pool_list, &ref->extra_allocation, ),
 		};
 
-		if (initial_poolsets > 0)
-			for(; initial_poolsets; --initial_poolsets)
-			{
-				allocator->preallocated[initial_poolsets-1] =
-				poolset_new(hooks.mallochook, poolset_chunk, pool_chunk, step);
-			}
-
-		allocator->max_size = poolset_biggestsize(*allocator->preallocated);
+		if (sets > 0)
+			for(size_t i=0; i<sets; ++i)
+				ref->preallocated[i] = poolset_new
+				(hooks.mallochook, step, max_block, ref);
 	}
 
-	return allocator;
+	return ref;
 }
 
-void gpallocator_del(gpallocator_t* allocator)
+void gpallocator_del(gpallocator_t* ref)
 {
 
 }
 
-static inline void* find_in_preallocated(gpallocator_t* allocator, size_t n)
+static inline void* find_in_preallocated(gpallocator_t* ref, size_t n)
 {
 	void* payload = NULL;
-	for(size_t i=0; i<allocator->poolsets; ++i)
+	for(size_t i=0; i<ref->poolsets; ++i)
 	{
-		payload = poolset_pull(allocator->preallocated[i], n);
+		payload = poolset_pull(ref->preallocated[i], n);
 		if(!isnull(payload))
 		{
-			poolset_t **a = allocator->preallocated, **b=a+i, *sv = *a;
+			poolset_t **a = ref->preallocated, **b=a+i, *sv = *a;
 			*a = *b, *b = sv;
-			allocator->search = in_preallocated;
+			ref->search = in_preallocated;
 			break;
 		}
 	}
 	return payload;
 }
 
-static inline void* find_in_extra(gpallocator_t* alloc, size_t n)
+static inline void* find_in_extra(gpallocator_t* ref, size_t n)
 {
-	alloc->search = in_extra;
+	ref->search = in_extra;
 	void* payload = NULL;
-	pool_list* extra = &alloc->extra_allocation;
+	pool_list* extra = &ref->extra_allocation;
 
 	for(pool_dnode* i=get_head(extra); iauto(extra, i); i=get_next(i))
 	{
@@ -181,8 +223,9 @@ static inline void* find_in_extra(gpallocator_t* alloc, size_t n)
 
 	if(isnull(payload))
 	{
-		pool_dnode* fallback = new_pool_dnode(alloc->hooks.mallochook, 
-		alloc->max_size+idpool_sizeof()+cell_overhead_sizeof(), n, alloc);
+		pool_dnode* fallback = new_pool_dnode
+		(ref->hooks.mallochook, ref->max_size*8, n, ref);
+		
 		if(!isnull(fallback))
 		{
 			pool_t* as_pool = to_pool_t(fallback->pool);
@@ -201,9 +244,10 @@ void* gpallocator_malloc(gpallocator_t* ref, size_t n)
 		void* payload = NULL;
 		switch (ref->search)
 		{
-		case in_preallocated:
-			payload = find_in_preallocated(ref, n);
+		// case in_preallocated:
+		// 	payload = find_in_preallocated(ref, n);
 
+		default:
 		case in_extra:
 			if(isnull(payload))
 				payload = find_in_extra(ref, n);
@@ -216,7 +260,7 @@ void* gpallocator_malloc(gpallocator_t* ref, size_t n)
 	{
 		chunk_dnode* chunk = new_chunk_node(ref->hooks.mallochook, n, ref);
 		chunk_list_add(&ref->big_chunks, chunk);
-		return chunk->payload;
+		return chunk->granules;
 	}
 
 	return NULL;

@@ -1,57 +1,7 @@
 #include "pool.h"
 #include "stack.h"
-#include <stdio.h>
 
-#if (GRANULE_SIZE_LOG2 < 3)
-#define granule_bytes (8ul)
-#else
-#define granule_bytes (1<<(GRANULE_SIZE_LOG2))
-#endif
-
-#if defined(MEM_ALGOS_SHOULD_SUPPORT_STDALIGN)
-#include <stdalign.h>
-#define cell_struct_members     \
-	union                       \
-	{                           \
-		SINGLY_ND(struct cell); \
-		void *owner;            \
-	};                          \
-	alignas(granule_bytes) byte_t granules[granule_bytes];
-#else
-#define cell_struct_members        \
-	union                          \
-	{                              \
-		SINGLY_ND(struct cell);    \
-		void *owner;               \
-		byte_t pad[granule_bytes]; \
-	};                             \
-	byte_t granules[granule_bytes];
-#endif
-
-#define cell_overhead_size (offsetof(cell, granules))
-
-typedef struct cell
-{
-	cell_struct_members
-}cell;
-
-static inline void cell_set_owner(cell* c, void* owner)
-{
-	c->owner = owner;
-}
-
-static inline cell* canonic_ptr(void* payload)
-{
-	return (cell*)(byteptr(payload) - cell_overhead_size);
-}
-
-static inline int print_cell(cell* c)
-{
-	return 
-	fprintf(stdout, "owner: <%p> cell addr: <%p>, granules addr: <%p>\n", 
-	c->owner, c, c->granules);
-}
-
+#include "cell.h"
 
 def_stack_container(cells, cell);
 
@@ -76,7 +26,7 @@ struct pool_t
 
 struct idpool_t
 {
-	void* id;
+	owned_block;
 	arena_t* chunk;
 	size_t segsize;
 	cells free_list;
@@ -177,7 +127,7 @@ idpool_t* idpool_init(void* mem, size_t mem_size, size_t segsize, void* id)
 
 void* idpool_getid(idpool_t* pool)
 {
-	return pool->id;
+	return pool->owner;
 }
 
 void* pool_pull(pool_t* pool)

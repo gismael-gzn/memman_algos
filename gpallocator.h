@@ -2,6 +2,7 @@
 #define GENERAL_PURPOSE_ALLOCATOR_H__
 
 #include "poolset.h"
+#include <string.h>
 
 struct memman_hooks
 {
@@ -12,8 +13,8 @@ struct memman_hooks
 
 typedef struct gpallocator_t gpallocator_t;
 
-gpallocator_t* gpallocator_new(struct memman_hooks hooks, size_t poolset_chunk,
-size_t initial_poolsets, size_t pool_chunk, size_t step, void* id);
+gpallocator_t* gpallocator_new(struct memman_hooks hooks, size_t sets, 
+size_t step, size_t max_block, void* id);
 
 void gpallocator_del(gpallocator_t* allocator);
 

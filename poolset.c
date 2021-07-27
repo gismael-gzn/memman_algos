@@ -22,55 +22,46 @@ size_t poolset_biggestsize(poolset_t* chain)
 	return pool_segsize(to_pool_t(chain->pool[chain->poolno-1]));
 }
 
-// Check this one today
-poolset_t *poolset_init(void *mem, size_t memsize, size_t poolmem, size_t step)
+#define int_div(num, den) ((num)/(den))
+
+poolset_t* poolset_new(malloc_impl* mallochook, size_t step, size_t max_block, void* id)
 {
-	poolset_t* set = NULL;
-	// void* base = mem;
-	if(!isnull(mem) && memsize >= sizeof *set)
+	step += to_nearest_multiple(step, 1<<GRANULE_SIZE_LOG2);
+	max_block += to_nearest_multiple(max_block, step);
+
+	size_t pools = max_block/step, 
+	poolmem = max_block*8,
+	overhead_size = poolset_sizeof(pools);
+
+	overhead_size += to_nearest_multiple(overhead_size, step);
+	poolmem += to_nearest_multiple(poolmem, step);
+
+	poolset_t* set = mallochook(overhead_size + pools*poolmem);
+
+	if(!isnull(set))
 	{
-		set = mem;
-		step += to_nearest_multiple(step, 1<<GRANULE_SIZE_LOG2);
+		byte_t* mem = byteptr(set);
+		mem += overhead_size;
 
-		memsize -= sizeof *set;
+		*set = (poolset_t){ step, pools, };
 
-		size_t poolno = memsize/poolmem, 
-		pool_arr_size = poolno*sizeof(idpool_t*);
-		if(memsize >= pool_arr_size)
+		size_t i=0;
+		for(; i<pools; ++i, mem += poolmem)
 		{
-			byte_t* memptr = byteptr(mem) + poolset_sizeof(poolno);
-			memptr = align_pointer(memptr, 1<<GRANULE_SIZE_LOG2);
-			memsize -= pool_arr_size;
-			memsize = ptroff(memptr, memptr+memsize);
-
-			size_t i=0;
-			for(; (i+1)*poolmem<=memsize; memptr += poolmem, ++i)
-			{
-				size_t segsize = (i+1)*step;
-				if(segsize >= poolmem - idpool_sizeof())
-					poolmem += step;
-				set->pool[i] = idpool_init(memptr, poolmem, segsize, set);
-
-				pool_t* upcast = to_pool_t(set->pool[i]);
-				printf(">>%zu::%zu\n", i, pool_segsize(upcast));
-			}
-			*set = (poolset_t){step, i, };
+			set->pool[i] = idpool_init(mem, poolmem, (i+1)*step, id);
+			// pool_t* upcast = to_pool_t(set->pool[i]);
+			// printf("poolmem: %zu segsize: %zu\n", poolmem, max_block*4);
+			// printf(">>%zu::%zu\n", i, pool_segsize(upcast));
 		}
 	}
-	return set;
-}
 
-poolset_t* poolset_new(malloc_impl mallochook, size_t memsize, size_t poolmem, size_t step)
-{
-	if(isnull(mallochook))
-		mallochook = malloc;
-	return poolset_init(mallochook(memsize), memsize, poolmem, step);
+	return set;
 }
 
 void* poolset_pull(poolset_t* set, size_t n)
 {
 	size_t idx = (n+!n-1)/set->step;
-	printf("mapping %zu/%zu\n", idx, set->poolno);
+	printf("mapping %zu/%zu\n", idx, set->poolno-1);
 	return idx < set->poolno? pool_pull(to_pool_t(set->pool[idx])): NULL;
 }
 
