@@ -20,9 +20,9 @@ void gpallocator_del(gpallocator_t* allocator);
 
 void* gpallocator_malloc(gpallocator_t* allocator, size_t n);
 
-void* gpallocator_realloc(void* payload);
+void* gpallocator_realloc(gpallocator_t* ref, void* ptr, size_t n);
 
-void* gpallocator_free(void* payload);
+void gpallocator_free(void* payload);
 
 size_t gpallocated_size(void* payload);
 

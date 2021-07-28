@@ -7,29 +7,19 @@
 
 typedef struct pool_t pool_t;
 
-typedef struct idpool_t idpool_t;
-
-pool_t* to_pool_t(idpool_t* ref);
-
-idpool_t* to_idpool_t(pool_t* ref);
-
 size_t cell_overhead_sizeof(void);
-
-size_t idpool_sizeof(void);
 
 size_t pool_sizeof(void);
 
 size_t pool_segsize(pool_t* pool);
 
-size_t pool_capacity(pool_t* pool);
+size_t pool_available(pool_t* pool);
 
-pool_t* pool_init(void* mem, size_t mem_size, size_t segment);
+unsigned pool_freeable(pool_t* pool);
 
-pool_t* pool_new(malloc_impl* mallochook, size_t mem_size, size_t segment);
+pool_t* pool_init(void* mem, size_t mem_size, size_t segsize, void* id);
 
-idpool_t* idpool_init(void* mem, size_t mem_size, size_t segment, void* id);
-
-void* idpool_getid(idpool_t* pool);
+pool_t* pool_new(malloc_impl* mallochook, size_t mem_size, size_t segment, void* id);
 
 void* pool_pull(pool_t* pool);
 

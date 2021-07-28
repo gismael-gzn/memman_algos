@@ -11,8 +11,8 @@ void unit_test1(int argc, char const *argv[])
 	"with a correct offset, so there are no invalid reads/writes and it's"
 	"possible to free all the blocks";
 
-	pool_t* p = pool_new(malloc, 4096, 0);
-	size_t m = pool_capacity(p);
+	pool_t* p = pool_new(malloc, 4096, 0, NULL);
+	size_t m = pool_available(p);
 	char* mem[m];
 
 	for(size_t i=0; i<m; ++i)
@@ -22,11 +22,11 @@ void unit_test1(int argc, char const *argv[])
 		assert(payload_owner_pool(mem[i]) == p);
 		assert((uintptr_t)mem[i]%8==0);
 	}
-	printf("pool capacity: %zu\n", pool_capacity(p));
+	printf("pool capacity: %zu\n", pool_available(p));
 
 	for(size_t i=0; i<m; ++i)
 		payload_pushto_pool(mem[i]);
-	printf("pool capacity: %zu\n", pool_capacity(p));
+	printf("pool capacity: %zu\n", pool_available(p));
 
 }
 
@@ -48,8 +48,14 @@ int main(int argc, char const *argv[])
 	((struct memman_hooks ){0}, 1, 8, 512, main);
 
 	void *test = gpallocator_malloc(main_thread, toint(argv[1], 10).sg);
+	gpallocator_malloc(main_thread, toint(argv[1], 10).sg);
 	size_t sz = gpallocated_size(test);
 	printf("size is %zu\n", sz);
+
+
+	gpallocator_free(test);
+
+	gpallocator_del(main_thread);
 
 	// while(1)
 	// {

@@ -10,24 +10,26 @@ typedef struct chunk_dnode
 	cell_struct_members_alt;
 }chunk_dnode;
 
-static inline chunk_dnode* chunk_canonic_ptr(byte_t* payload)
+static inline chunk_dnode* chunk_canonic_ptr(void* payload)
 {
-	return (chunk_dnode*)(payload - offsetof(chunk_dnode, granules));
+	return (chunk_dnode*)(byteptr(payload) - offsetof(chunk_dnode, granules));
 }
 
-static chunk_dnode* new_chunk_node(malloc_impl* mallochook, size_t size, void* owner)
+static inline chunk_dnode* new_chunk_node
+(malloc_impl* mallochook, size_t size, void* owner)
 {
 	chunk_dnode* cn = mallochook(sizeof *cn + size - 1);
 	*cn = (chunk_dnode){.size = size, {.owner = owner, }, };
 	return cn;
 }
 
-static void realloc_chunk_node
+static inline void realloc_chunk_node
 (realloc_impl* reallochook, chunk_dnode** cn, size_t newsize)
 {
-	void* safe = reallochook(*cn, newsize);
+	void* safe = reallochook(*cn, newsize + offsetof(chunk_dnode, granules));
 	if(!isnull(safe))
-		*cn = safe;
+		*cn = safe,
+		(*cn)->size = newsize;
 }
 
 
@@ -35,10 +37,10 @@ typedef struct pool_dnode
 {
 	owned_block_alt;
 	DOUBLY_ND(struct pool_dnode);
-	idpool_t* pool;
+	pool_t* pool;
 }pool_dnode;
 
-static pool_dnode* new_pool_dnode
+static inline pool_dnode* new_pool_dnode
 (malloc_impl* mallochook, size_t memsize, size_t segment, void* owner)
 {
 	pool_dnode* pdn = NULL;
@@ -49,10 +51,8 @@ static pool_dnode* new_pool_dnode
 	pdn = (void*)mem;
 	mem += sizeof *pdn, mem = align_pointer(mem, 1<<GRANULE_SIZE_LOG2);
 
-	// memset(pdn, 0, totalmem);
-
 	*pdn = (pool_dnode){
-		.owner = owner, .pool = idpool_init(mem, memsize, segment, pdn),
+		.owner = owner, .pool = pool_init(mem, memsize, segment, pdn),
 	};
 
 	return pdn;
@@ -84,60 +84,6 @@ static inline void chunk_list_pop(chunk_dnode* nd)
 	dl_pop(nd)
 }
 
-enum priority {in_preallocated, in_extra};
-
-struct gpallocator_t
-{
-	owned_block;
-	struct memman_hooks hooks;
-	size_t poolsets, max_size;
-	enum priority search;
-	chunk_list big_chunks;
-	pool_list extra_allocation;
-	poolset_t *preallocated[];
-};
-
-static inline unsigned get_ownerships(void *save[const 5], void* start)
-{
-	unsigned block_type = 0;
-	owned_block_alt *trav = !isnull(start)? canonic_ptr_head(start): NULL;
-
-	save[block_type] = trav = trav->owner, ++block_type;
-		save[block_type] = trav = trav->owner, ++block_type;
-			save[block_type] = trav = trav->owner, ++block_type;
-	save[block_type] = trav = trav->owner, ++block_type;
-
-	// while(!isnull(trav))
-	// 	save[block_type] = trav = trav->owner, ++block_type;
-
-	return block_type-1;
-}
-
-/* 
-block -> pool -> allocator
-block -> pool -> node -> allocator
-block -> allocator
-*/
-
-size_t gpallocated_size(void* payload)
-{
-	enum block_type {standalone=1, preallocated=3, extra=4};
-	void *ownership_chain[5] = {0};
-	unsigned type = get_ownerships(ownership_chain, payload);
-
-	switch (type)
-	{
-	case standalone:
-		return chunk_canonic_ptr(payload)->size;
-
-	case extra:
-	case preallocated:
-		return payload_pool_segsize(payload);
-	}
-
-	return type;
-}
-
 static inline void sanitize_hooks(struct memman_hooks* hooks_ref)
 {
 	if(isnull(hooks_ref->mallochook))
@@ -146,6 +92,187 @@ static inline void sanitize_hooks(struct memman_hooks* hooks_ref)
 		hooks_ref->reallochook = realloc;
 	if(isnull(hooks_ref->freehook))
 		hooks_ref->freehook = free;
+}
+
+enum priority {in_preallocated, in_extra};
+
+struct gpallocator_t
+{
+	owned_block;
+	struct memman_hooks hooks;
+	size_t poolset_no, max_size;
+	enum priority search;
+	chunk_list big_allocs;
+	pool_list on_request;
+	poolset_t *initial[];
+};
+
+static inline void* find_in_preallocated(gpallocator_t* ref, size_t n)
+{
+	void* payload = NULL;
+	for(size_t i=0; i<ref->poolset_no; ++i)
+	{
+		payload = poolset_pull(ref->initial[i], n);
+		if(!isnull(payload))
+		{
+			poolset_t **a = ref->initial, **b=a+i, *sv = *a;
+			*a = *b, *b = sv;
+			ref->search = in_preallocated;
+			break;
+		}
+	}
+	return payload;
+}
+
+static inline void* find_in_extra(gpallocator_t* ref, size_t n)
+{
+	ref->search = in_extra;
+	void* payload = NULL;
+	pool_list* extra = &ref->on_request;
+
+	for(pool_dnode* i=get_head(extra); iauto(extra, i); i=get_next(i))
+	{
+		pool_t* pool = i->pool;
+		if(!isnull(pool))
+		{
+			if(n <= pool_segsize(pool) && pool_available(pool))
+			{
+				payload = pool_pull(pool);
+				if(get_head(extra) != i)
+					pool_list_pop(i),
+					pool_list_add(extra, i);
+			}
+			else
+				continue;
+		}
+	}
+
+	if(isnull(payload))
+	{
+		pool_dnode* fallback = new_pool_dnode
+		(ref->hooks.mallochook, ref->max_size*8, n, ref);
+		
+		if(!isnull(fallback))
+		{
+			pool_t* pool = fallback->pool;
+			payload = pool_pull(pool);
+			pool_list_add(extra, fallback);
+		}
+	}
+
+	return payload;
+}
+
+typedef enum alloc_type
+{
+	large_ = 2, initial_ = 3, extra_ = 4,
+}alloc_type;
+
+/* block -> pool -> allocator
+block -> pool -> node -> allocator
+block -> allocator */
+static inline alloc_type get_ownerships(void *save[const 4], void* start)
+{
+	alloc_type t = 0;
+	owned_block_alt *trav = !isnull(start)? canonic_ptr_head(start): NULL;
+
+	while(!isnull(trav))
+		save[t] = trav = trav->owner, ++t;
+
+	for(size_t i=0; i<4; ++i)
+		printf("<%p> T:%d\n", save[i], t);
+
+	return t;
+}
+
+static inline void *allocate_pool(gpallocator_t *ref, size_t n)
+{
+	void *payload = NULL;
+	if(n <= ref->max_size)
+	{
+		switch (ref->search)
+		{
+		case in_preallocated:
+			payload = find_in_preallocated(ref, n);
+
+		// default:
+		// case in_extra:
+		// 	if(isnull(payload))
+		// 		payload = find_in_extra(ref, n);
+		}
+
+	}
+	return payload;
+}
+
+static inline void *allocate_chunk(gpallocator_t *ref, size_t n)
+{
+	chunk_dnode* chunk = new_chunk_node(ref->hooks.mallochook, n, ref);
+	chunk_list_add(&ref->big_allocs, chunk);
+	return chunk->granules;
+}
+
+static inline size_t allocation_size
+(void *ownerlist[const 4], alloc_type t, void *ptr)
+{
+	size_t retval = t;
+	switch (t)
+	{
+		case large_:
+			retval = chunk_canonic_ptr(ptr)->size;
+		break;
+
+		case extra_: case initial_:
+		{
+			pool_t *p = ownerlist[0];
+			retval = pool_segsize(p);
+		}
+		break;
+	}
+	return retval;
+}
+
+static inline void deallocate_large(gpallocator_t *ref, void *payload)
+{
+	chunk_dnode *to_free = chunk_canonic_ptr(payload);
+	chunk_list_pop(to_free);
+	ref->hooks.freehook(to_free);
+}
+
+static inline void deallocate_extra
+(gpallocator_t *ref, void *ownerlist[const 4], void *payload)
+{
+	pool_dnode *pdn = ownerlist[1];
+	pool_t* p = pdn->pool;
+	pool_push(p, payload);
+	if(pool_freeable(p))
+		pool_list_pop(pdn),
+		ref->hooks.freehook(pdn);
+}
+
+static inline void deallocate_initial(void *ownerlist[const 4], void *payload)
+{
+	pool_t* p = ownerlist[0];
+	pool_push(p, payload);
+}
+
+static inline void allocation_free
+(void *ownerlist[const 4], alloc_type t, void *payload)
+{
+	gpallocator_t *owner = ownerlist[t-2];
+	switch (t)
+	{
+		case large_: deallocate_large(owner, payload); break;
+		case extra_: deallocate_extra(owner, ownerlist, payload); break;
+		case initial_: deallocate_initial(ownerlist, payload); break;
+	}
+}
+
+size_t gpallocated_size(void* payload)
+{
+	void *ownerlist[4] = {0};
+	alloc_type t = get_ownerships(ownerlist, payload);
+	return allocation_size(ownerlist, t, payload);
 }
 
 gpallocator_t* gpallocator_new(struct memman_hooks hooks, size_t sets, 
@@ -163,13 +290,13 @@ size_t step, size_t max_block, void* id)
 			sets,
 			max_block,
 			in_preallocated,
-			dl_compound(chunk_list, &ref->big_chunks, ),
-			dl_compound(pool_list, &ref->extra_allocation, ),
+			dl_compound(chunk_list, &ref->big_allocs, ),
+			dl_compound(pool_list, &ref->on_request, ),
 		};
 
 		if (sets > 0)
 			for(size_t i=0; i<sets; ++i)
-				ref->preallocated[i] = poolset_new
+				ref->initial[i] = poolset_new
 				(hooks.mallochook, step, max_block, ref);
 	}
 
@@ -178,90 +305,82 @@ size_t step, size_t max_block, void* id)
 
 void gpallocator_del(gpallocator_t* ref)
 {
+	for(chunk_dnode *i=get_head(&ref->big_allocs), *f=NULL; 
+	!lempty(&ref->big_allocs);)
+		f = i, mv_next(i), chunk_list_pop(f), ref->hooks.freehook(f);
 
+	for(pool_dnode *i=get_head(&ref->on_request), *f=NULL;
+	!lempty(&ref->on_request); )
+		f = i, mv_next(i), pool_list_pop(f), ref->hooks.freehook(f);
+
+	for(size_t i=0; i<ref->poolset_no; ++i)
+		ref->hooks.freehook(ref->initial[i]);
+
+	ref->hooks.freehook(ref);
 }
 
-static inline void* find_in_preallocated(gpallocator_t* ref, size_t n)
-{
-	void* payload = NULL;
-	for(size_t i=0; i<ref->poolsets; ++i)
-	{
-		payload = poolset_pull(ref->preallocated[i], n);
-		if(!isnull(payload))
-		{
-			poolset_t **a = ref->preallocated, **b=a+i, *sv = *a;
-			*a = *b, *b = sv;
-			ref->search = in_preallocated;
-			break;
-		}
-	}
-	return payload;
-}
-
-static inline void* find_in_extra(gpallocator_t* ref, size_t n)
-{
-	ref->search = in_extra;
-	void* payload = NULL;
-	pool_list* extra = &ref->extra_allocation;
-
-	for(pool_dnode* i=get_head(extra); iauto(extra, i); i=get_next(i))
-	{
-		pool_t* check = to_pool_t(i->pool);
-		if(!isnull(check))
-		{
-			if(n <= pool_segsize(check) && pool_capacity(check))
-			{
-				payload = pool_pull(check);
-				if(get_head(extra) != i)
-					pool_list_pop(i),
-					pool_list_add(extra, i);
-			}
-			else
-				continue;
-		}
-	}
-
-	if(isnull(payload))
-	{
-		pool_dnode* fallback = new_pool_dnode
-		(ref->hooks.mallochook, ref->max_size*8, n, ref);
-		
-		if(!isnull(fallback))
-		{
-			pool_t* as_pool = to_pool_t(fallback->pool);
-			payload = pool_pull(as_pool);
-			pool_list_add(extra, fallback);
-		}
-	}
-
-	return payload;
-}
 
 void* gpallocator_malloc(gpallocator_t* ref, size_t n)
 {
-	if(n <= ref->max_size)
+	return n <= ref->max_size? allocate_pool(ref, n): allocate_chunk(ref, n);
+}
+
+void* gpallocator_realloc(gpallocator_t* ref, void* ptr, size_t n)
+{
+	if(isnull(ptr))
+		return gpallocator_malloc(ref, n);
+
+	void *ownerlist[4] = {0};
+	alloc_type t = get_ownerships(ownerlist, ptr);
+	size_t size = allocation_size(ownerlist, t, ptr),
+	treshold = poolset_smallestsize(*ref->initial);
+
+	void *payload = NULL;
+	switch (t)
 	{
-		void* payload = NULL;
-		switch (ref->search)
+	case large_:
+		if (n <= ref->max_size)
+			payload = allocate_pool(ref, n),
+			memcpy(payload, ptr, payload_pool_segsize(payload)),
+			deallocate_large(ref, ptr);
+		else
 		{
-		// case in_preallocated:
-		// 	payload = find_in_preallocated(ref, n);
-
-		default:
-		case in_extra:
-			if(isnull(payload))
-				payload = find_in_extra(ref, n);
+			chunk_dnode *c = chunk_canonic_ptr(ptr);
+			chunk_list_pop(c);
+			realloc_chunk_node(ref->hooks.reallochook, &c, n);
+			chunk_list_add(&ref->big_allocs, c);
+			payload = c->granules;
 		}
+	break;
 
-		return payload;
+	case initial_:
+		if(n > ref->max_size)
+			payload = allocate_chunk(ref, n);
+		else if(n < size-treshold || n > size)
+			payload = allocate_pool(ref, n);
+		else
+			break;
+		memcpy(payload, ptr, n),
+		deallocate_initial(ownerlist, ptr);
+		break;
+
+	case extra_:
+		if(n > ref->max_size)
+			payload = allocate_chunk(ref, n);
+		else if(n < size-treshold || n > size)
+			payload = allocate_pool(ref, n);
+		else
+			break;
+		memcpy(payload, ptr, n),
+		deallocate_extra(ref, ownerlist, ptr);
+		break;
 	}
 
-	else
-	{
-		chunk_dnode* chunk = new_chunk_node(ref->hooks.mallochook, n, ref);
-		chunk_list_add(&ref->big_chunks, chunk);
-		return chunk->granules;
-	}
+}
 
-	return NULL;
+void gpallocator_free(void* payload)
+{
+	void *ownerlist[4] = {0};
+	alloc_type t = get_ownerships(ownerlist, payload);
+	allocation_free(ownerlist, t, payload);
 }
