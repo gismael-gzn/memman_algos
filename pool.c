@@ -50,15 +50,15 @@ size_t pool_segsize(pool_t* pool)
 	return pool->segsize - cell_overhead_size;
 }
 
-pool_t* pool_new(malloc_impl* mallochook, size_t mem_size, size_t segsize, void* id)
+pool_t* pool_new(malloc_impl* mallochook, size_t mem_size, size_t segsize, void* owner)
 {
 	if(isnull(mallochook))
 		mallochook = malloc;
 	void* mem = mallochook(mem_size);
-	return pool_init(mem, mem_size, segsize, id);
+	return pool_init(mem, mem_size, segsize, owner);
 }
 
-pool_t* pool_init(void* mem, size_t mem_size, size_t segsize, void* id)
+pool_t* pool_init(void* mem, size_t mem_size, size_t segsize, void* owner)
 {
 	pool_t* pool = NULL;
 	arena_t* arena = NULL;
@@ -66,8 +66,13 @@ pool_t* pool_init(void* mem, size_t mem_size, size_t segsize, void* id)
 	if(!isnull(mem))
 	{
 		pool = mem;
+		size_t used_memory = sizeof *pool;
+		used_memory += to_nearest_multiple(used_memory, granule_bytes);
+
 		arena = arena_init
-		((byteptr(mem)+sizeof *pool), mem_size-sizeof *pool, granule_bytes);
+		((byteptr(mem)+used_memory), mem_size-used_memory, granule_bytes);
+		if(isnull(arena))
+			return NULL;
 
 		if(segsize <= granule_bytes)
 			segsize = sizeof(cell);
@@ -76,7 +81,7 @@ pool_t* pool_init(void* mem, size_t mem_size, size_t segsize, void* id)
 			segsize += to_nearest_multiple(segsize, granule_bytes);
 
 		*pool = (pool_t){
-			id, arena, segsize, sc_compound(cells, &pool->free_list, ),
+			owner, arena, segsize, sc_compound(cells, &pool->free_list, ),
 			};
 	}
 
@@ -88,8 +93,8 @@ void* pool_pull(pool_t* pool)
 	void* payload = NULL;
 	cell* new_cell = NULL;
 
-	printf("capacity: %zu, need: %zu\n", 
-		arena_capacity(pool->chunk), pool->segsize);
+	// printf("capacity: %zu, need: %zu\n", 
+	// 	arena_capacity(pool->chunk), pool->segsize);
 
 	if(pool->segsize <= arena_capacity(pool->chunk))
 		new_cell = arena_malloc_quick(pool->chunk, pool->segsize),

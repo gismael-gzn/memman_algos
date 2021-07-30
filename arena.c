@@ -41,6 +41,11 @@ arena_t* arena_init(void* mem, size_t mem_size, size_t alignment)
 {
 	arena_t* reg = mem;
 
+	size_t min_required_size = sizeof *reg;
+	min_required_size += to_nearest_multiple(sizeof(reg), alignment);
+	if(mem_size <= min_required_size)
+		return NULL;
+
 	if (!isnull(reg))
 		*reg = (arena_t){
 			byteptr(mem) + sizeof *reg + bytes_to_align(mem, alignment),
@@ -66,4 +71,3 @@ void* arena_malloc_quick(arena_t* reg, size_t n)
 {
 	return linear_malloc(&reg->alloc_ptr, n);
 }
-

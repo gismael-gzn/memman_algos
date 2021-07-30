@@ -1,0 +1,28 @@
+() add null guards to gpallocator's on-request pool and large allocations.
+- As for now, the gpallocator might fail due to not having NULL guards when
+trying to create a new pool and when creating large allocations, this may lead
+to the allocator failing and causing a segmentation fault.
+
+() Makefile to make tests and some sort of installation method so that when
+compiling it's only required to link with -l flag
+
+() Expand gpallocator functionalities??
+- Add free-marked blocks and some sort cyclic collecting?
+() Expand the project with more memalgorithms like refcount mark-free etc?
+
+() make a new definition for memory cells in cell.h
+- This is not extremely important, but the change should be in the
+cell_struct_members and cell_struct_members_alt macros.
+They should be modified so that they generate a linked list node with the
+type that they're expanding in.
+
+() ?? make all types complete in their header ??
+- Might help with optimizations by the compiler??
+
+() Fine adjustments in gpallocator
+- Minor changes in particular in functions that backtrack ownership;
+ownerlist, allocation_type could be packed in a structure, maybe even the
+gpallocator pointer could be well-packed among those. That might require to
+re-adjust quite some functions that receive void *ownerlist[4] as their first
+argument, but, as for now, it doesn't seem necesary since it seems that the
+allocator is functional.

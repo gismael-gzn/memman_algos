@@ -1,14 +1,33 @@
 #include "gpallocator.h"
 #include "doubly.h"
-#include "singly.h"
 #include "cell.h"
 
-typedef struct chunk_dnode
+typedef struct chunk_dnode chunk_dnode;
+
+/* To ensure that the payload has proper alignment.
+Might as well just use _Alignas(granule_bytes) */
+#if (GRANULE_SIZE_LOG2 > 3)
+typedef struct chunk_dnode_head__
 {
+	DOUBLY_ND(chunk_dnode);
+	size_t size;
+}chunk_dnode_head__;
+#define padding_for_large_allocations \
+	byte_t padding                    \
+		[to_nearest_multiple(offsetof(chunk_dnode_head__, size), granule_bytes)];
+#else
+#define padding_for_large_allocations 
+#endif
+
+struct chunk_dnode
+{
+	padding_for_large_allocations
 	DOUBLY_ND(struct chunk_dnode);
 	size_t size;
-	cell_struct_members_alt;
-}chunk_dnode;
+	cell_struct_members_alt
+};
+
+#define large_block_overhead offsetof(chunk_dnode, granules)
 
 static inline chunk_dnode* chunk_canonic_ptr(void* payload)
 {
@@ -18,15 +37,16 @@ static inline chunk_dnode* chunk_canonic_ptr(void* payload)
 static inline chunk_dnode* new_chunk_node
 (malloc_impl* mallochook, size_t size, void* owner)
 {
-	chunk_dnode* cn = mallochook(sizeof *cn + size - 1);
+	chunk_dnode* cn = mallochook(size + offsetof(chunk_dnode, granules));
 	*cn = (chunk_dnode){.size = size, {.owner = owner, }, };
 	return cn;
 }
 
+// null guard might go here
 static inline void realloc_chunk_node
 (realloc_impl* reallochook, chunk_dnode** cn, size_t newsize)
 {
-	void* safe = reallochook(*cn, newsize + offsetof(chunk_dnode, granules));
+	void* safe = reallochook(*cn, newsize + large_block_overhead);
 	if(!isnull(safe))
 		*cn = safe,
 		(*cn)->size = newsize;
@@ -100,7 +120,7 @@ struct gpallocator_t
 {
 	owned_block;
 	struct memman_hooks hooks;
-	size_t poolset_no, max_size;
+	size_t poolset_no, min_size, max_size;
 	enum priority search;
 	chunk_list big_allocs;
 	pool_list on_request;
@@ -179,33 +199,32 @@ static inline alloc_type get_ownerships(void *save[const 4], void* start)
 	while(!isnull(trav))
 		save[t] = trav = trav->owner, ++t;
 
-	for(size_t i=0; i<4; ++i)
-		printf("<%p> T:%d\n", save[i], t);
+	// for(size_t i=0; i<4; ++i)
+	// 	printf("<%p> T:%d\n", save[i], t);
 
 	return t;
 }
 
-static inline void *allocate_pool(gpallocator_t *ref, size_t n)
+static inline void *allocate_from_pool(gpallocator_t *ref, size_t n)
 {
 	void *payload = NULL;
 	if(n <= ref->max_size)
-	{
 		switch (ref->search)
 		{
-		case in_preallocated:
-			payload = find_in_preallocated(ref, n);
+			case in_preallocated:
+				payload = find_in_preallocated(ref, n);
 
-		// default:
-		// case in_extra:
-		// 	if(isnull(payload))
-		// 		payload = find_in_extra(ref, n);
+			if(isnull(payload))
+			{
+				default:
+				case in_extra:
+					payload = find_in_extra(ref, n);
+			}
 		}
-
-	}
 	return payload;
 }
 
-static inline void *allocate_chunk(gpallocator_t *ref, size_t n)
+static inline void *allocate_in_chunk(gpallocator_t *ref, size_t n)
 {
 	chunk_dnode* chunk = new_chunk_node(ref->hooks.mallochook, n, ref);
 	chunk_list_add(&ref->big_allocs, chunk);
@@ -276,7 +295,7 @@ size_t gpallocated_size(void* payload)
 }
 
 gpallocator_t* gpallocator_new(struct memman_hooks hooks, size_t sets, 
-size_t step, size_t max_block, void* id)
+size_t step, size_t max_block)
 {
 	sanitize_hooks(&hooks);
 	gpallocator_t* ref = hooks.mallochook
@@ -285,11 +304,7 @@ size_t step, size_t max_block, void* id)
 	if(!isnull(ref))
 	{
 		*ref = (gpallocator_t){
-			NULL,
-			hooks,
-			sets,
-			max_block,
-			in_preallocated,
+			NULL, hooks, sets, step, max_block, in_preallocated,
 			dl_compound(chunk_list, &ref->big_allocs, ),
 			dl_compound(pool_list, &ref->on_request, ),
 		};
@@ -298,6 +313,7 @@ size_t step, size_t max_block, void* id)
 			for(size_t i=0; i<sets; ++i)
 				ref->initial[i] = poolset_new
 				(hooks.mallochook, step, max_block, ref);
+
 	}
 
 	return ref;
@@ -322,7 +338,7 @@ void gpallocator_del(gpallocator_t* ref)
 
 void* gpallocator_malloc(gpallocator_t* ref, size_t n)
 {
-	return n <= ref->max_size? allocate_pool(ref, n): allocate_chunk(ref, n);
+	return n <= ref->max_size? allocate_from_pool(ref, n): allocate_in_chunk(ref, n);
 }
 
 void* gpallocator_realloc(gpallocator_t* ref, void* ptr, size_t n)
@@ -333,14 +349,20 @@ void* gpallocator_realloc(gpallocator_t* ref, void* ptr, size_t n)
 	void *ownerlist[4] = {0};
 	alloc_type t = get_ownerships(ownerlist, ptr);
 	size_t size = allocation_size(ownerlist, t, ptr),
-	treshold = poolset_smallestsize(*ref->initial);
+	treshold = ref->min_size;
+
+	if (n == 0)
+	{
+		allocation_free(ownerlist, t, ptr);
+		return NULL;
+	}
 
 	void *payload = NULL;
 	switch (t)
 	{
 	case large_:
 		if (n <= ref->max_size)
-			payload = allocate_pool(ref, n),
+			payload = allocate_from_pool(ref, n),
 			memcpy(payload, ptr, payload_pool_segsize(payload)),
 			deallocate_large(ref, ptr);
 		else
@@ -355,32 +377,71 @@ void* gpallocator_realloc(gpallocator_t* ref, void* ptr, size_t n)
 
 	case initial_:
 		if(n > ref->max_size)
-			payload = allocate_chunk(ref, n);
-		else if(n < size-treshold || n > size)
-			payload = allocate_pool(ref, n);
+			payload = allocate_in_chunk(ref, n);
+		else if(n <= size-treshold || n > size)
+			payload = allocate_from_pool(ref, n);
 		else
+		{
+			payload = ptr;
 			break;
+		}
 		memcpy(payload, ptr, n),
 		deallocate_initial(ownerlist, ptr);
 		break;
 
 	case extra_:
 		if(n > ref->max_size)
-			payload = allocate_chunk(ref, n);
+			payload = allocate_in_chunk(ref, n);
 		else if(n < size-treshold || n > size)
-			payload = allocate_pool(ref, n);
+			payload = allocate_from_pool(ref, n);
 		else
+		{
+			payload = ptr;
 			break;
+		}
 		memcpy(payload, ptr, n),
 		deallocate_extra(ref, ownerlist, ptr);
 		break;
 	}
 
+	return payload;
 }
 
 void gpallocator_free(void* payload)
 {
+	if(isnull(payload))
+		return;
 	void *ownerlist[4] = {0};
 	alloc_type t = get_ownerships(ownerlist, payload);
 	allocation_free(ownerlist, t, payload);
+}
+
+static inline unsigned guard_null(void *ptr1, void *ptr2)
+{
+	return isnull(ptr1) || isnull(ptr2);
+}
+
+size_t gpptr_write(void *dst, void *src, size_t wrt_size)
+{
+	if(guard_null(dst, src)) return 0;
+	size_t allowed_write = gpallocated_size(dst);
+	if(wrt_size > allowed_write)
+		wrt_size = allowed_write;
+	memmove(dst, src, wrt_size);
+	return wrt_size;
+}
+
+size_t gpptr_read(void *rd, void *buf, size_t rd_size)
+{
+	if(guard_null(rd, buf)) return 0;
+	size_t allowed_read = gpallocated_size(rd);
+	if(rd_size > allowed_read)
+		rd_size = allowed_read;
+	memmove(buf, rd, rd_size);
+	return rd_size;
+}
+
+size_t gpptr_objwrite(void *to, void *from)
+{
+	return gpptr_read(from, to, gpallocated_size(to));
 }

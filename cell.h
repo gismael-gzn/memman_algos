@@ -1,14 +1,27 @@
-#ifndef OWNED_BLOCK_DEFINITION_H__
-#define OWNED_BLOCK_DEFINITION_H__
+#ifndef CELL_BLOCK_DEFINITION_H__
+#define CELL_BLOCK_DEFINITION_H__
 
 #include "extrastddef.h"
 #include "align_config.h"
 
+/* a cell is a structure that contains a block of metada and a set of
+contiguous granules that represent an available payload.
+Cells are defined in such way that allows them to be stored as free lists when
+they are free, and to store an ownership pointer when they are allocated,
+such pointer represents the cell owner, or "allocated from" relationship.
+The granules member is the one returned by allocation functions,
+as the returned pointer points to a location within the cell's variable,
+then it's easy to recalculate the original cell address to reallocate, free or
+retrieve any other information about the cell in nearly constant time.
+This also means that writing outside the bounds of an allocation is forbidden.
+ */
+
 #if (GRANULE_SIZE_LOG2 < 3)
-#define granule_bytes (8ul)
-#else
-#define granule_bytes (1<<(GRANULE_SIZE_LOG2))
+#undef GRANULE_SIZE_LOG2
+#define GRANULE_SIZE_LOG2 (3)
 #endif
+
+#define granule_bytes (1<<(GRANULE_SIZE_LOG2))
 
 #define owned_block                \
 	union                          \
@@ -60,4 +73,4 @@ static inline void* canonic_ptr_head(void* payload)
 // 	c->owner, c, c->granules);
 // }
 
-#endif //OWNED_BLOCK_DEFINITION_H__
+#endif //CELL_BLOCK_DEFINITION_H__
