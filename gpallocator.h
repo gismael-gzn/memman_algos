@@ -8,6 +8,7 @@ at-request allocation for large blocks and for when all the poolsets get emptied
 
 #include "poolset.h"
 #include <string.h>
+#include <stdio.h>
 
 /* memory management function pointers */
 struct memman_hooks

@@ -127,6 +127,7 @@ struct gpallocator_t
 	poolset_t *initial[];
 };
 
+// mod
 static inline void* find_in_preallocated(gpallocator_t* ref, size_t n)
 {
 	void* payload = NULL;
@@ -135,8 +136,11 @@ static inline void* find_in_preallocated(gpallocator_t* ref, size_t n)
 		payload = poolset_pull(ref->initial[i], n);
 		if(!isnull(payload))
 		{
-			poolset_t **a = ref->initial, **b=a+i, *sv = *a;
-			*a = *b, *b = sv;
+			if(i != 0)
+			{
+				poolset_t **a = ref->initial, **b=a+i, *sv = *a;
+				*a = *b, *b = sv;
+			}
 			ref->search = in_preallocated;
 			break;
 		}
@@ -144,23 +148,26 @@ static inline void* find_in_preallocated(gpallocator_t* ref, size_t n)
 	return payload;
 }
 
+// mod
 static inline void* find_in_extra(gpallocator_t* ref, size_t n)
 {
 	ref->search = in_extra;
 	void* payload = NULL;
 	pool_list* extra = &ref->on_request;
+	n += to_nearest_multiple(n, ref->min_size);
 
 	for(pool_dnode* i=get_head(extra); iauto(extra, i); i=get_next(i))
 	{
 		pool_t* pool = i->pool;
 		if(!isnull(pool))
 		{
-			if(n <= pool_segsize(pool) && pool_available(pool))
+			if(n == pool_segsize(pool) && pool_available(pool))
 			{
 				payload = pool_pull(pool);
 				if(get_head(extra) != i)
 					pool_list_pop(i),
 					pool_list_add(extra, i);
+				break;
 			}
 			else
 				continue;
@@ -179,7 +186,6 @@ static inline void* find_in_extra(gpallocator_t* ref, size_t n)
 			pool_list_add(extra, fallback);
 		}
 	}
-
 	return payload;
 }
 
@@ -341,6 +347,7 @@ void* gpallocator_malloc(gpallocator_t* ref, size_t n)
 	return n <= ref->max_size? allocate_from_pool(ref, n): allocate_in_chunk(ref, n);
 }
 
+// mod
 void* gpallocator_realloc(gpallocator_t* ref, void* ptr, size_t n)
 {
 	if(isnull(ptr))
@@ -392,14 +399,14 @@ void* gpallocator_realloc(gpallocator_t* ref, void* ptr, size_t n)
 	case extra_:
 		if(n > ref->max_size)
 			payload = allocate_in_chunk(ref, n);
-		else if(n < size-treshold || n > size)
+		else if(n <= size-treshold || n > size)
 			payload = allocate_from_pool(ref, n);
 		else
 		{
 			payload = ptr;
 			break;
 		}
-		memcpy(payload, ptr, n),
+		memcpy(payload, ptr, allocation_size(ownerlist, t, ptr));
 		deallocate_extra(ref, ownerlist, ptr);
 		break;
 	}
